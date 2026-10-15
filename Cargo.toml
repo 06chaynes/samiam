@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Retro text-to-speech from letter-to-sound rules and a formant synthesizer"
 authors = ["Christian Haynes <06chaynes@gmail.com>"]
+repository = "https://github.com/06chaynes/samiam"
 license = "MIT OR Apache-2.0"
 exclude = ["assets", "web"]
 
