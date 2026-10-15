@@ -1,0 +1,14 @@
+[package]
+name = "samiam"
+version = "0.1.0"
+edition = "2024"
+description = "Retro text-to-speech from letter-to-sound rules and a formant synthesizer"
+authors = ["Christian Haynes <06chaynes@gmail.com>"]
+license = "MIT OR Apache-2.0"
+exclude = ["assets", "web"]
+
+[dependencies]
+wasm-bindgen = { version = "0.2.129", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"
