@@ -601,7 +601,7 @@ pub fn phonemes(text: &str) -> String {
             };
             let ordinal = ["ST", "ND", "RD", "TH"].iter().any(|s| leads(after, s));
             let mut words = match whole.replace(',', "").parse::<u64>() {
-                Ok(n @ 1100..2000) if whole.len() == 4 && fraction.is_empty() && c != '$' => {
+                Ok(n) if whole.len() == 4 && fraction.is_empty() && c != '$' => {
                     let tail = match n % 100 {
                         0 => "HUNDRED".into(),
                         low @ 1..10 => format!("O {}", number(low)),
@@ -719,7 +719,7 @@ fn rules(word: &str) -> String {
         out.extend(phonemes.split_whitespace());
         at += len;
     }
-    out.dedup();
+    out.dedup_by(|a, b| a == b && !a.starts_with(VOWELS));
     out.join(" ")
 }
 
