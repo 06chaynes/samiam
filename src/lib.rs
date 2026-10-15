@@ -7,7 +7,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 // tried in order; a letter no rule covers says itself. In a context a space is a word edge, `#` one
 // or more vowels, `:` any consonants, `^` one consonant, `.` a voiced consonant, `+` E, I or Y, `@`
 // a consonant that makes U say oo, `&` a sibilant and `%` a suffix such as -ED or -ING.
-static RULES: [(&str, &str, &str, &str); 302] = [
+static RULES: [(&str, &str, &str, &str); 303] = [
     ("", "A", " ", "AX"),
     (" ", "ARE", " ", "AA R"),
     (" ", "AR", "O", "AX R"),
@@ -139,6 +139,7 @@ static RULES: [(&str, &str, &str, &str); 302] = [
     ("+^", "I", "^+", "IH"),
     ("", "I", "T%", "AY"),
     ("#:^", "I", "^+", "IH"),
+    ("", "I", "^I", "IH"),
     ("", "I", "^+", "AY"),
     ("", "IR", "", "ER"),
     ("", "IGH", "", "AY"),
