@@ -7,7 +7,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 // tried in order; a letter no rule covers says itself. In a context a space is a word edge, `#` one
 // or more vowels, `:` any consonants, `^` one consonant, `.` a voiced consonant, `+` E, I or Y, `@`
 // a consonant that makes U say oo, `&` a sibilant and `%` a suffix such as -ED or -ING.
-static RULES: [(&str, &str, &str, &str); 303] = [
+static RULES: [(&str, &str, &str, &str); 311] = [
     ("", "A", " ", "AX"),
     (" ", "ARE", " ", "AA R"),
     (" ", "AR", "O", "AX R"),
@@ -148,6 +148,8 @@ static RULES: [(&str, &str, &str, &str); 303] = [
     ("", "IGN", "^", "AY N"),
     ("", "IGN", "%", "AY N"),
     ("", "IQUE", "", "IY K"),
+    (" :", "I", "#", "AY"),
+    ("", "I", "#", "IY"),
     ("", "I", "", "IH"),
     ("", "J", "", "JH"),
     (" ", "K", "N", ""),
@@ -159,6 +161,7 @@ static RULES: [(&str, &str, &str, &str); 303] = [
     ("", "MICRO", "", "M AY K R OW"),
     ("", "MOV", "", "M UW V"),
     (" ", "NINE", "", "N AY N"),
+    (" ", "NINTH", "", "N AY N TH"),
     ("E", "NG", "+", "N JH"),
     ("", "NG", "R", "NG G"),
     ("", "NG", "#", "NG G"),
@@ -198,6 +201,7 @@ static RULES: [(&str, &str, &str, &str); 303] = [
     ("", "OO", "", "UW"),
     ("", "O", "E", "OW"),
     ("", "O", " ", "OW"),
+    ("", "O", "S ", "OW"),
     ("", "OA", "", "OW"),
     (" ", "ONLY", "", "OW N L IY"),
     (" ", "ONCE", "", "W AH N S"),
@@ -238,8 +242,9 @@ static RULES: [(&str, &str, &str, &str); 303] = [
     ("", "S", "S", ""),
     (".", "S", " ", "Z"),
     ("#:.E", "S", " ", "Z"),
-    ("#:^#", "S", " ", "S"),
     ("U", "S", " ", "S"),
+    ("#:^##", "S", " ", "Z"),
+    ("#:^#", "S", " ", "S"),
     (" :#", "S", " ", "Z"),
     (" ", "SCH", "", "S K"),
     ("", "S", "C+", ""),
@@ -310,6 +315,9 @@ static RULES: [(&str, &str, &str, &str); 303] = [
     (" :", "Y", "^#", "AY"),
     ("", "Y", "", "IH"),
     (".", "'S", " ", "Z"),
+    ("#:.E", "'S", " ", "Z"),
+    ("#:^E", "'S", " ", "S"),
+    ("#", "'S", " ", "Z"),
     ("", "'", "", ""),
 ];
 // Per sound: milliseconds, three formants in Hz, then voicing, aspiration and frication levels
@@ -390,13 +398,12 @@ const SCALES: [(u64, &str); 5] = [
     (1_000, "THOUSAND"),
     (100, "HUNDRED"),
 ];
-const ORDINALS: [(&str, &str); 9] = [
+const ORDINALS: [(&str, &str); 8] = [
     ("ONE", "FIRST"),
     ("TWO", "SECOND"),
     ("THREE", "THIRD"),
     ("FIVE", "FIFTH"),
     ("EIGHT", "EIGHTH"),
-    ("NINE", "NINTH"),
     ("TWELVE", "TWELFTH"),
     ("Y", "IETH"),
     ("", "TH"),
@@ -727,10 +734,13 @@ fn fits(context: impl Iterator<Item = u8>, text: &[u8], mut at: isize, step: isi
     let get = |at: isize| *text.get(at as usize).unwrap_or(&b' ');
     let vowel = |c: u8| b"AEIOUY".contains(&c);
     let consonant = |c: u8| c.is_ascii_uppercase() && !vowel(c);
-    for want in context {
+    let mut context = context.peekable();
+    while let Some(want) = context.next() {
         let c = get(at);
         let fits = match want {
             b' ' => !c.is_ascii_uppercase(),
+            // `##` is two or more vowels.
+            b'#' if context.peek() == Some(&b'#') => vowel(c),
             b'#' => {
                 while vowel(get(at + step)) {
                     at += step;
@@ -747,8 +757,16 @@ fn fits(context: impl Iterator<Item = u8>, text: &[u8], mut at: isize, step: isi
             b'^' => consonant(c),
             b'.' => b"BDVGJLMNRWZ".contains(&c),
             b'+' => b"EIY".contains(&c),
-            b'@' => b"TSRDLZNJH".contains(&c),
-            b'&' => b"SCGZXJH".contains(&c),
+            // Left contexts only: an H counts when it ends TH, CH or SH.
+            b'@' | b'&' => {
+                let (letters, pairs): (&[u8], &[u8]) = match want {
+                    b'@' => (b"TSRDLZNJ", b"TCS"),
+                    _ => (b"SCGZXJ", b"CS"),
+                };
+                let pair = c == b'H' && pairs.contains(&get(at + step));
+                at += if pair { step } else { 0 };
+                pair || letters.contains(&c)
+            }
             b'%' => ["ING", "ELY", "ER", "ES", "ED", "E"]
                 .iter()
                 .find(|s| {
@@ -807,11 +825,29 @@ mod tests {
     }
 
     #[test]
+    fn spells_endings() {
+        for (word, end) in [
+            ("radios", "D IY OW Z"),
+            ("status", "T AH S"),
+            ("genius", "IY AH S"),
+            ("lion", "L AY1 AX N"),
+            ("Jane's", "N Z"),
+            ("Joe's", "OW1 Z"),
+            ("Mike's", "K S"),
+            ("clothes", "TH S"),
+            ("hue", "HH Y UW1"),
+        ] {
+            assert!(phonemes(word).ends_with(end), "{word}");
+        }
+    }
+
+    #[test]
     fn reads_numbers() {
         for (written, spoken) in [
             ("1,250", "one thousand two hundred fifty"),
             ("21st", "twenty first"),
             ("30th", "thirtieth"),
+            ("9th", "ninth"),
             ("1984", "nineteen eighty four"),
             ("1905", "nineteen o five"),
             ("$1", "one dollar"),
@@ -820,6 +856,7 @@ mod tests {
         ] {
             assert_eq!(phonemes(written), phonemes(spoken), "{written}");
         }
+        assert_eq!(phonemes("ninth"), "N AY1 N TH");
     }
 
     #[test]
