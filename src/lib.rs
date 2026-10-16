@@ -7,16 +7,16 @@ use wasm_bindgen::prelude::wasm_bindgen;
 // tried in order; a letter no rule covers says itself. In a context a space is a word edge, `#` one
 // or more vowels, `:` any consonants, `^` one consonant, `.` a voiced consonant, `+` E, I or Y, `@`
 // a consonant that makes U say oo, `&` a sibilant and `%` a suffix such as -ED or -ING.
-static RULES: [(&str, &str, &str, &str); 311] = [
+static RULES: [(&str, &str, &str, &str); 312] = [
     ("", "A", " ", "AX"),
     (" ", "ARE", " ", "AA R"),
     (" ", "AR", "O", "AX R"),
     ("", "AR", "#", "EH R"),
-    ("^", "AS", "#", "EY S"),
     ("", "A", "WA", "AX"),
     ("", "AW", "", "AO"),
     (" :", "ANY", "", "EH N IY"),
     ("", "A", "^+#", "EY"),
+    ("^", "AS", "#", "EY S"),
     ("#:", "ALLY", "", "AX L IY"),
     (" ", "AL", "#", "AX L"),
     ("", "AGAIN", "", "AX G EH N"),
@@ -191,6 +191,7 @@ static RULES: [(&str, &str, &str, &str); 311] = [
     ("", "OULD", "", "UH D"),
     ("^", "OU", "^L", "AH"),
     ("", "OUP", "", "UW P"),
+    ("", "OU", "I", "UW"),
     ("", "OU", "", "AW"),
     ("", "OY", "", "OY"),
     ("", "OING", "", "OW IH NG"),
@@ -322,7 +323,7 @@ static RULES: [(&str, &str, &str, &str); 311] = [
 ];
 // Per sound: milliseconds, three formants in Hz, then voicing, aspiration and frication levels
 // and the frication centre in Hz.
-const SOUNDS: [(&str, [f32; 8]); 41] = [
+const SOUNDS: [(&str, [f32; 8]); 37] = [
     ("IY", [110.0, 270.0, 2290.0, 3010.0, 1.0, 0.0, 0.0, 0.0]),
     ("IH", [80.0, 390.0, 1990.0, 2550.0, 1.0, 0.0, 0.0, 0.0]),
     ("IX", [50.0, 400.0, 1850.0, 2500.0, 1.0, 0.0, 0.0, 0.0]),
@@ -360,10 +361,6 @@ const SOUNDS: [(&str, [f32; 8]); 41] = [
     ("PB", [10.0, 400.0, 1100.0, 2150.0, 0.0, 0.0, 0.21, 1500.0]),
     ("TB", [10.0, 400.0, 1600.0, 2600.0, 0.0, 0.0, 0.42, 4000.0]),
     ("KB", [15.0, 300.0, 1990.0, 2850.0, 0.0, 0.0, 0.42, 2000.0]),
-    (",", [150.0, 500.0, 1500.0, 2500.0, 0.0, 0.0, 0.0, 0.0]),
-    (".", [400.0, 500.0, 1500.0, 2500.0, 0.0, 0.0, 0.0, 0.0]),
-    ("?", [400.0, 500.0, 1500.0, 2500.0, 0.0, 0.0, 0.0, 0.0]),
-    ("!", [400.0, 500.0, 1500.0, 2500.0, 0.0, 0.0, 0.0, 0.0]),
 ];
 const PARTS: [(&str, &str); 14] = [
     ("EY", "EH IH"),
@@ -503,12 +500,8 @@ impl Voice {
                 })
                 .collect();
             sounds.reverse();
-            let span: f32 = sounds
-                .iter()
-                .rev()
-                .skip(stop.is_some().into())
-                .map(|(s, _)| s[0])
-                .sum();
+            // Every sentence ends in a pause; the contour finishes before it.
+            let span: f32 = sounds.iter().rev().skip(1).map(|(s, _)| s[0]).sum();
             let mut elapsed = 0.0;
             for (target, accent) in sounds {
                 for _ in 0..(target[0] / step) as usize {
@@ -578,21 +571,29 @@ impl Voice {
 pub fn phonemes(text: &str) -> String {
     let mut out = vec![];
     let mut rest = text;
+    // All-caps text is shouting, not acronyms.
+    let shout = !text.contains(|c: char| c.is_ascii_lowercase());
     while let Some(c) = rest.chars().next() {
+        let before = &text[..text.len() - rest.len()];
         let digits = rest.trim_start_matches(['$', '-']);
+        let sign = &rest[..rest.len() - digits.len()];
         let len = if let Some((key, long)) = ABBREVIATIONS.iter().find(|(key, _)| leads(rest, key))
         {
-            out.push(say(long));
+            // St. follows a name or number when it means street.
+            let saint = *key == "St."
+                && !before.split_whitespace().next_back().is_some_and(|w| {
+                    w.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit())
+                });
+            out.push(say(if saint { "SAINT" } else { long }));
             key.len()
         } else if digits.starts_with(|c: char| c.is_ascii_digit())
-            && (c != '-'
-                || !text[..text.len() - rest.len()].ends_with(|c: char| !c.is_whitespace()))
+            && (!sign.starts_with('-') || !before.ends_with(|c: char| !c.is_whitespace()))
         {
             let end = digits
                 .char_indices()
                 .find(|&(i, c)| {
                     !c.is_ascii_digit()
-                        && !(",.".contains(c)
+                        && !(",.:".contains(c)
                             && digits[i + 1..].starts_with(|c: char| c.is_ascii_digit()))
                 })
                 .map_or(digits.len(), |(i, _)| i);
@@ -607,17 +608,25 @@ pub fn phonemes(text: &str) -> String {
                 words.collect::<Vec<_>>().join(" ")
             };
             let ordinal = ["ST", "ND", "RD", "TH"].iter().any(|s| leads(after, s));
-            let mut words = match whole.replace(',', "").parse::<u64>() {
-                Ok(n) if whole.len() == 4 && fraction.is_empty() && c != '$' => {
+            let time = whole.split_once(':').is_some_and(|(_, m)| m.len() == 2);
+            let mut words = match whole.replace([',', ':'], "").parse::<u64>() {
+                // A time, or a year unless it ends 00 to 09: those are said as plain numbers.
+                Ok(n)
+                    if time
+                        || whole.len() == 4
+                            && fraction.is_empty()
+                            && !sign.contains('$')
+                            && n % 1000 >= 10 =>
+                {
                     let tail = match n % 100 {
-                        0 => "HUNDRED".into(),
+                        0 => if time { "O'CLOCK" } else { "HUNDRED" }.into(),
                         low @ 1..10 => format!("O {}", number(low)),
                         low => number(low),
                     };
                     format!("{} {tail}", number(n / 100))
                 }
-                Ok(n) => number(n),
-                Err(_) => spell(whole),
+                Ok(n) if !whole.contains(':') => number(n),
+                _ => spell(whole),
             };
             let swap = ORDINALS
                 .iter()
@@ -628,13 +637,13 @@ pub fn phonemes(text: &str) -> String {
             if !fraction.is_empty() {
                 words = format!("{words} POINT {}", spell(fraction));
             }
-            if c == '-' {
+            if sign.contains('-') {
                 words = format!("MINUS {words}");
             }
             if percent {
                 words += " PERCENT";
             }
-            if c == '$' {
+            if sign.contains('$') {
                 words += &format!(" DOLLAR{}", if words == "ONE" { "" } else { "S" });
             }
             out.push(say(&words));
@@ -644,10 +653,9 @@ pub fn phonemes(text: &str) -> String {
                 .find(|c: char| !c.is_ascii_alphabetic() && c != '\'')
                 .unwrap_or(rest.len());
             let word = &rest[..len];
-            if (2..=4).contains(&len)
-                && word.bytes().all(|b| b.is_ascii_uppercase())
-                && !LITTLE.contains(&word)
-            {
+            let caps = word.bytes().all(|b| b.is_ascii_uppercase());
+            let unsayable = !word.contains(VOWELS) && !word.contains('Y');
+            if caps && (unsayable || len <= 4 && !shout && !LITTLE.contains(&word)) {
                 out.extend(word.bytes().map(|b| stress(LETTERS[(b - b'A') as usize])));
             } else {
                 out.push(say(word));
@@ -795,6 +803,10 @@ fn sounds(name: &str) -> Vec<[f32; 8]> {
                 s
             })
             .collect(),
+        None if name.starts_with(PAUSES) => {
+            let ms = if name == "," { 150.0 } else { 400.0 };
+            vec![[ms, 500.0, 1500.0, 2500.0, 0.0, 0.0, 0.0, 0.0]]
+        }
         None => SOUNDS
             .iter()
             .filter(|(sound, _)| *sound == name)
@@ -850,7 +862,12 @@ mod tests {
             ("9th", "ninth"),
             ("1984", "nineteen eighty four"),
             ("1905", "nineteen o five"),
+            ("2005", "two thousand five"),
+            ("3:30", "three thirty"),
+            ("12:00", "twelve o'clock"),
+            ("3:1", "three one"),
             ("$1", "one dollar"),
+            ("-$5", "minus five dollars"),
             ("3.14%", "three point one four percent"),
             ("-3 5-10", "minus three five ten"),
         ] {
@@ -867,13 +884,19 @@ mod tests {
         );
         assert_eq!(phonemes("The FBI"), "DH AX EH1 F B IY1 AY1");
         assert_eq!(phonemes("IT is"), phonemes("it is"));
+        assert_eq!(phonemes("NO STOP HELP"), phonemes("no stop help"));
+        assert_eq!(phonemes("use HTTPS"), phonemes("use H T T P S"));
+        assert_eq!(phonemes("St. Louis"), phonemes("saint Louis"));
+        assert_eq!(phonemes("Main St."), phonemes("Main street"));
     }
 
     #[test]
     fn every_phoneme_sounds() {
         let used = RULES
             .iter()
-            .flat_map(|(.., phonemes)| phonemes.split_whitespace());
+            .map(|(.., phonemes)| *phonemes)
+            .chain(LETTERS)
+            .flat_map(str::split_whitespace);
         for name in used.chain([",", ".", "!", "?"]) {
             assert!(!sounds(name).is_empty(), "{name}");
         }
