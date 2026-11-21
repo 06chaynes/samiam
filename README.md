@@ -13,7 +13,8 @@ Samuel Andrew Microsoft was born in '85 and has been reading errors ever since.
 ```js
 import init, { Voice, phonemes } from "samiam-rs";
 await init();
-phonemes("Hello!");  // "HH EH1 L OW !"
+phonemes("Hello!");  // "HH AX L OW1 !"
 new Voice().wav("I am Sam, Sam I am.");  // Uint8Array, a complete WAV
+new Voice().cues("Hello!");  // Float32Array, each phoneme's start time in seconds
 ```
 
