@@ -353,7 +353,7 @@ const SOUNDS: [(&str, [f32; 8]); 36] = [
     ("M", [70.0, 280.0, 900.0, 2200.0, 0.6, 0.0, 0.0, NASAL]),
     ("N", [70.0, 280.0, 1700.0, 2600.0, 0.6, 0.0, 0.0, NASAL]),
     ("NG", [70.0, 280.0, 2300.0, 2750.0, 0.6, 0.0, 0.0, NASAL]),
-    ("HH", [60.0, 500.0, 1500.0, 2500.0, 0.0, 0.5, 0.0, 0.0]),
+    ("HH", [80.0, 500.0, 1500.0, 2500.0, 0.0, 0.5, 0.0, 0.0]),
     ("F", [90.0, 340.0, 1100.0, 2080.0, 0.0, 0.0, 0.1, 7500.0]),
     ("V", [60.0, 220.0, 1100.0, 2080.0, 0.5, 0.0, 0.07, 7500.0]),
     ("TH", [90.0, 320.0, 1290.0, 2540.0, 0.0, 0.0, 0.14, 5000.0]),
@@ -420,7 +420,7 @@ const SHAPES: [Shape; 7] = [
     (VELAR, 0.42, -14.0, &[(0.0, 700.0, 1.0)]),
 ];
 // Aspiration's loudness in dB below a vowel.
-const ASPIRATION: f32 = -35.0;
+const ASPIRATION: f32 = -15.0;
 const VOWELS: [char; 5] = ['A', 'E', 'I', 'O', 'U'];
 // Consonants a vowel is drawn out before.
 const VOICED: [&str; 8] = ["B", "D", "G", "V", "DH", "Z", "ZH", "JH"];
@@ -1163,10 +1163,18 @@ fn sounds(name: &str) -> Vec<[f32; 8]> {
     }
 }
 
-// Holds the mouth through a word boundary while the voice eases off, and places a k or g by the
-// vowel beside it: the closure a little above that vowel's second formant, where the tongue meets
-// the palate, but never as low as a b, and the release there too.
+// Shapes an h like the vowel after it, holds the mouth through a word boundary while the voice
+// eases off, and places a k or g by the vowel beside it: the closure a little above that vowel's
+// second formant, where the tongue meets the palate, but never as low as a b, and the release
+// there too.
 fn settle(sounds: &mut [([f32; 8], f32)]) {
+    for i in 0..sounds.len() {
+        if sounds[i].0[5] > 0.0
+            && let Some(&(vowel, _)) = sounds[i + 1..].iter().find(|s| s.0[4] > 0.9)
+        {
+            sounds[i].0[1..4].copy_from_slice(&vowel[1..4]);
+        }
+    }
     for i in 1..sounds.len() {
         if sounds[i].0[7] == BOUNDARY {
             let before = sounds[i - 1].0;
@@ -1421,7 +1429,7 @@ mod tests {
         };
         for (text, len, want) in [
             ("The cat, a dog. Is 2 you?", 59323, 0x96b1b2c3e7d78a48),
-            ("Hello!", 18142, 0x3f0d872e286d65e1),
+            ("Hello!", 18583, 0x801ed30fc75efcad),
             ("Judge the morning news.", 40547, 0x39922d0078be4b11),
             ("", 0, 0),
         ] {
