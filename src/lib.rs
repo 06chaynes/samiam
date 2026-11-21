@@ -578,6 +578,15 @@ pub struct Voice {
     pub pitch: f32,
     // 2.0 talks twice as fast.
     pub speed: f32,
+    // Scales every resonance: below 1 a bigger mouth, above 1 a smaller one.
+    pub tract: f32,
+    // Widens the third formant and the fixed upper resonances, softening a bright source.
+    pub width: f32,
+    // Hz above which the source is low-passed, twice over; 0 leaves it whole.
+    pub cutoff: f32,
+    // One cycle played each pitch period in place of the built-in pulse; empty keeps the pulse.
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen(getter_with_clone))]
+    pub source: Vec<f32>,
 }
 
 impl Default for Voice {
@@ -594,6 +603,10 @@ impl Voice {
             sample_rate: 22_050,
             pitch: 95.0,
             speed: 1.0,
+            tract: 1.0,
+            width: 1.0,
+            cutoff: 0.0,
+            source: vec![],
         }
     }
 
@@ -609,6 +622,8 @@ impl Voice {
         let (mut noise_was, mut hush) = ([0f32; 2], 0f32);
         // How nasal the voice is, and the nose's resonance.
         let (mut nasal, mut nose) = (0f32, [0f32; 2]);
+        // The two low-pass stages the source passes through.
+        let mut smooth = [0f32; 2];
         // Per sample: the voice, the selected noise with its shape, and aspiration with its level.
         let mut mix = vec![];
         // Summed squares of each noise and of aspiration, and of the voice in vowels with their
@@ -659,23 +674,40 @@ impl Voice {
                     let [_, f1, f2, f3, voicing, aspiration, frication, _] = now;
                     let goal = if target[7] == NASAL { 1.0 } else { 0.0 };
                     nasal += (goal - nasal) * 300.0 / rate;
-                    // One low-passed glottal pulse a period.
-                    let pulse = if turn { voicing } else { 0.0 };
-                    let source = resonate(&mut glottis, pulse, 0.0, 100.0, rate);
+                    let source = if self.source.is_empty() {
+                        // One low-passed glottal pulse a period.
+                        let pulse = if turn { voicing } else { 0.0 };
+                        resonate(&mut glottis, pulse, 0.0, 100.0, rate)
+                    } else {
+                        // The cycle at this point of the period, between its samples.
+                        let at = phase * self.source.len() as f32;
+                        let (i, frac) = (at as usize % self.source.len(), at.fract());
+                        let next = self.source[(i + 1) % self.source.len()];
+                        voicing * (self.source[i] * (1.0 - frac) + next * frac)
+                    };
+                    let source = if self.cutoff > 0.0 {
+                        let keep = (-TAU * self.cutoff / rate).exp();
+                        smooth[0] = (1.0 - keep) * source + keep * smooth[0];
+                        smooth[1] = (1.0 - keep) * smooth[0] + keep * smooth[1];
+                        smooth[1]
+                    } else {
+                        source
+                    };
+                    let (k, wide) = (self.tract, self.width);
                     let formants = [
-                        (f1, 96.0),
-                        (f2, 144.0 * (1.0 + 2.0 * nasal)),
-                        (f3, 150.0 * (1.0 + 2.0 * nasal)),
-                        (3300.0, 250.0),
-                        (3750.0, 200.0),
-                        (4900.0, 600.0),
+                        (f1 * k, 96.0),
+                        (f2 * k, 144.0 * (1.0 + 2.0 * nasal)),
+                        (f3 * k, 150.0 * (1.0 + 2.0 * nasal) * wide),
+                        (3300.0 * k, 250.0 * wide),
+                        (3750.0 * k, 200.0 * wide),
+                        (4900.0 * k, 600.0 * wide),
                     ];
                     let through = |mem: &mut [[f32; 2]; 6], x: f32| {
                         let stages = formants.into_iter().zip(mem);
                         stages.fold(x, |x, ((f, bw), mem)| resonate(mem, x, f, bw, rate))
                     };
                     // A nasal damps the mouth's upper formants and hums through the nose.
-                    let hum = resonate(&mut nose, source, 250.0, 100.0, rate);
+                    let hum = resonate(&mut nose, source, 250.0 * k, 100.0, rate);
                     let mouth = through(&mut tract, source) * (1.0 - 0.5 * nasal) + nasal * hum;
                     // Radiated from the lips, then brightened.
                     let radiated = mouth - mouth_was;
@@ -1328,6 +1360,45 @@ mod tests {
         assert!(samples.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
         assert!(samples.iter().any(|s| s.abs() > 0.5));
         assert!(Voice::new().speak("").is_empty());
+        let saw = (0..64).map(|i| 1.0 - i as f32 / 32.0).collect();
+        for (knob, voice) in [
+            (
+                "tract",
+                Voice {
+                    tract: 1.2,
+                    ..Voice::new()
+                },
+            ),
+            (
+                "width",
+                Voice {
+                    width: 2.0,
+                    ..Voice::new()
+                },
+            ),
+            (
+                "cutoff",
+                Voice {
+                    cutoff: 2500.0,
+                    ..Voice::new()
+                },
+            ),
+            (
+                "source",
+                Voice {
+                    source: saw,
+                    ..Voice::new()
+                },
+            ),
+        ] {
+            let changed = voice.speak("Hello there! How are you?");
+            assert!(
+                changed.iter().all(|s| s.is_finite() && s.abs() <= 1.0),
+                "{knob}"
+            );
+            assert!(changed.iter().any(|s| s.abs() > 0.5), "{knob}");
+            assert_ne!(changed, samples, "{knob}");
+        }
     }
 
     #[test]
